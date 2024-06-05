@@ -5,6 +5,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
+import pymongo.errors
 import utilities
 
 load_dotenv()
@@ -34,6 +35,9 @@ try:
 except Exception as e:
     print(e)
 
+db = db_client.discordBot #create a new database in cluster called "discordBot" if does not exist
+users_collection = db.users #create a new "users" collection (table) in discordBot database if doesn't exist
+#users_collection.insert_one({"_id": "109413", "key_test":"val_test2"})
 
 #--ERROR HANDLING--#
 
@@ -46,6 +50,27 @@ async def on_error(event, *args):
 @bot.event
 async def on_command_error(ctx, error):
     print(f'Uncaught Command Error: {error}')
+
+
+#--DATABASE OPERATION WRAPPERS--#
+
+#implements insert if non-existant entry or update if entry exists 
+async def create_users_entry(ctx, username):
+    try:
+        if users_collection.find_one({"_id": ctx.author.id}) != None: #exists in database, update
+            users_collection.update_one({"_id": ctx.author.id}, {"$set": {"venmo_usr": username}})
+        else: #does not exist in database, create new entry
+            user_entry = {"_id": ctx.author.id, "venmo_usr": username}
+            users_collection.insert_one(user_entry)
+    except pymongo.errors.DuplicateKeyError as e:
+        print(f"Somehow duplicate key error in create_users_entry: {e}")
+    except Exception as e:
+        print(f"Unknown error in create_users_entry: {e}")
+
+
+#implements insert if non-existant entry or update if entry exists 
+async def create_outstanding_payments_entry():
+    print("hi")
 
 
 #--EVENTS--#
@@ -107,8 +132,6 @@ async def get_venmo_user(member, channel):
                 return None
 
     #Now they must be verified
-    embed = discord.Embed(title= f'Your Venmo account confirmed has been confirmed, {member.name}. Thank you!', color=0x00ff00)
-    await channel.send(embed=embed)
     return username.content #return input venmo username
 
 
@@ -132,7 +155,9 @@ async def verify_venmo_cmd(ctx):
     username = await get_venmo_user(ctx.author, channel)
 
     if username != None:
-        print("hi")
+        await create_users_entry(ctx, username)
+        embed = discord.Embed(title= f'Your Venmo account confirmed has been confirmed, {ctx.author.name}. Thank you!', color=0x00ff00)
+        await channel.send(embed=embed)
     
 
 

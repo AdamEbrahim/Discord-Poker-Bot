@@ -3,10 +3,15 @@ import discord
 import asyncio
 from discord.ext import commands
 from dotenv import load_dotenv
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
 import utilities
 
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
+DB_USERNAME = os.getenv('DB_USERNAME')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+DB_CLUSTER_STRING = os.getenv('DB_CLUSTER_STRING')
 
 #default intents with members enabled
 intents = discord.Intents.default()
@@ -15,6 +20,19 @@ intents.message_content = True
 
 #create bot object to interact with discord API 
 bot = commands.Bot(command_prefix='/', intents=intents)
+
+
+#--Connect to MongoDB database--#
+db_url = f'mongodb+srv://{DB_USERNAME}:{DB_PASSWORD}@{DB_CLUSTER_STRING}'
+
+# Create a new client and connect to the server
+db_client = MongoClient(db_url, server_api=ServerApi('1'))
+# Send a ping to confirm a successful connection
+try:
+    db_client.admin.command('ping')
+    print("Pinged your deployment. You successfully connected to MongoDB!")
+except Exception as e:
+    print(e)
 
 
 #--ERROR HANDLING--#
@@ -37,10 +55,14 @@ async def on_ready():
 
 
 async def get_venmo_user(member, channel):
-    embed = discord.Embed(title=f'Please send your Venmo username (the name after the \"@\").',
-                                 description='Please make sure it is accurate so that you can receive your Poker winnings. This message will time out in 2 minutes.',
-                                 color=0x800080)
-    await channel.send(embed=embed)
+    try:
+        embed = discord.Embed(title=f'Please send your Venmo username (the name after the \"@\").',
+                                    description='Please make sure it is accurate so that you can receive your Poker winnings. This message will time out in 2 minutes.',
+                                    color=0x800080)
+        await channel.send(embed=embed)
+
+    except Exception as e:
+        print(f"Error while sending message to get user's Venmo account: {e}")
     
     def check(msg):
         return msg.channel == channel and msg.author == member
@@ -55,7 +77,7 @@ async def get_venmo_user(member, channel):
         except asyncio.TimeoutError:
             embed = discord.Embed(title='TIMEOUT OCCURRED 👎', description='Please use the \"**/verify-venmo**\" command to try again.', color=0xf50000)
             await channel.send(embed=embed)
-            return
+            return None
 
         embed = discord.Embed(title='CONFIRMATION', description=f'Please confirm that your venmo username is \"**@{username.content}**\". This will time out in 2 minutes.', color=0x800080)
         confirmation_msg = await channel.send(embed=embed)
@@ -67,7 +89,7 @@ async def get_venmo_user(member, channel):
         except asyncio.TimeoutError:
             embed = discord.Embed(title='TIMEOUT OCCURRED 👎', description='Please use the \"**/verify-venmo**\" command to try again.', color=0xf50000)
             await channel.send(embed=embed)
-            return
+            return None
         else:
             if str(reaction.emoji) == '❌':
                 embed = discord.Embed(title='Please resend your Venmo username (the name after the \"@\").',
@@ -82,11 +104,12 @@ async def get_venmo_user(member, channel):
             else:
                 embed = discord.Embed(title='UNKNOWN ERROR 👎', description='Please use the \"**/verify-venmo**\" command to try again.', color=0xf50000)
                 await channel.send(embed=embed)
-                return
+                return None
 
     #Now they must be verified
     embed = discord.Embed(title= f'Your Venmo account confirmed has been confirmed, {member.name}. Thank you!', color=0x00ff00)
     await channel.send(embed=embed)
+    return username.content #return input venmo username
 
 
 @bot.event
@@ -106,7 +129,10 @@ async def verify_venmo_cmd(ctx):
     else:
         channel = ctx.channel
 
-    await get_venmo_user(ctx.author, channel)
+    username = await get_venmo_user(ctx.author, channel)
+
+    if username != None:
+        print("hi")
     
 
 

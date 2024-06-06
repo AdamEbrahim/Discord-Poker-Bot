@@ -37,11 +37,17 @@ except Exception as e:
 
 db = db_client.discordBot #create a new database in cluster called "discordBot" if does not exist
 users_collection = db.users #create a new "users" collection (table) in discordBot database if doesn't exist
-#users_collection.insert_one({"_id": "109413", "key_test":"val_test2"})
+outstanding_payments_collection = db.outstanding_payments #create a new "outstanding_payments" collection (table) in discordBot database if doesn't exist
+
+try:
+    outstanding_payments_collection.create_index({"debtor": 1, "recipient": 1}, unique=True)
+except pymongo.errors.PyMongoError as e:
+    print(f"An error occurred while creating the unique index in outstanding_payments_collection: {e}")
+
 
 #--ERROR HANDLING--#
 
-#general uncaught error handler
+#general uncaught bot error handler
 @bot.event
 async def on_error(event, *args):
     print(f'Uncaught Error: {event}')
@@ -57,20 +63,31 @@ async def on_command_error(ctx, error):
 #implements insert if non-existant entry or update if entry exists 
 async def create_users_entry(ctx, username):
     try:
-        if users_collection.find_one({"_id": ctx.author.id}) != None: #exists in database, update
-            users_collection.update_one({"_id": ctx.author.id}, {"$set": {"venmo_usr": username}})
-        else: #does not exist in database, create new entry
-            user_entry = {"_id": ctx.author.id, "venmo_usr": username}
-            users_collection.insert_one(user_entry)
-    except pymongo.errors.DuplicateKeyError as e:
-        print(f"Somehow duplicate key error in create_users_entry: {e}")
+        user_entry = {"_id": ctx.author.id, "venmo_usr": username}
+        users_collection.insert_one(user_entry)
+    except pymongo.errors.DuplicateKeyError as e: #entry exists
+        print(f"Duplicate key error in create_users_entry, updating entry instead")
+        users_collection.update_one({"_id": ctx.author.id}, {"$set": {"venmo_usr": username}})
     except Exception as e:
         print(f"Unknown error in create_users_entry: {e}")
 
 
 #implements insert if non-existant entry or update if entry exists 
-async def create_outstanding_payments_entry():
-    print("hi")
+async def create_outstanding_payments_entry(discord_id_debtor: int, discord_id_recipient: int, amount: float):
+    if not (isinstance(discord_id_debtor, int) and isinstance(discord_id_recipient, int) and isinstance(amount, (int, float))):
+        print("create_outstanding_payments_entry parameters are incorrect types")
+        return
+    
+    try:
+        #fields: discord id of person who owes money, discord id of person to whom money is owed (can't be their venmo since it can change in users table), amount
+        outstanding_payments_entry = {"debtor": discord_id_debtor, "recipient": discord_id_recipient, "amount": amount}
+        outstanding_payments_collection.insert_one(outstanding_payments_entry); 
+            
+    except pymongo.errors.DuplicateKeyError as e: #entry exists (outstanding balance to person exists, increase outstanding balance)
+        print(f"Duplicate key error in create_outstanding_payments_entry, updating entry instead")
+        outstanding_payments_collection.update_one({"debtor": discord_id_debtor, "recipient": discord_id_recipient}, {"$inc": {"amount": amount}})
+    except Exception as e:
+        print(f"Unknown error in create_outstanding_payments_entry: {e}")
 
 
 #--EVENTS--#
@@ -158,8 +175,21 @@ async def verify_venmo_cmd(ctx):
         await create_users_entry(ctx, username)
         embed = discord.Embed(title= f'Your Venmo account confirmed has been confirmed, {ctx.author.name}. Thank you!', color=0x00ff00)
         await channel.send(embed=embed)
-    
 
+
+@bot.command(name="record-game", help='Record individual winnings from a Poker game')
+@commands.max_concurrency(number=1, per=commands.BucketType.user, wait=False) #Ensures command can only be used 1 time per user concurrently
+async def record_game_cmd(ctx):
+    await create_outstanding_payments_entry(1234, 5678, 32.5)
+    await create_outstanding_payments_entry(1357, 2468, 17.8)
+    await create_outstanding_payments_entry(1357, 3579, 23.3)
+    await create_outstanding_payments_entry(1357, 3579, 15.5)
+    await create_outstanding_payments_entry(9872, 1627, 12)
+    
+    
+@bot.command(name="payout", help='Send Venmo requests for all outstanding balances a user(s) has')
+async def payout_cmd(ctx):
+    print("hi")
 
 # @bot.event
 # async def on_raw_member_remove(payload):

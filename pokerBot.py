@@ -122,7 +122,7 @@ async def get_outstanding_payments_entries(discord_id):
 #--EVENTS--#
 @bot.event
 async def on_ready():
-    #await bot.tree.sync(guild=discord.Object(id=1246667177759608932))
+    # await bot.tree.sync(guild=discord.Object(id=1246667177759608932))
     print(f'{bot.user.name} has connected to Discord!')
 
 
@@ -219,18 +219,73 @@ async def verify_venmo_cmd(interaction, username: str):
 
 
 @bot.tree.command(name="record-game", description='Record player winnings from a Poker game', guild=discord.Object(id=1246667177759608932))
-@commands.max_concurrency(number=1, per=commands.BucketType.user, wait=False) #Ensures command can only be used 1 time per user concurrently
-async def record_game_cmd(interaction):
-    await create_outstanding_payments_entry(1234, 5678, 32.5)
-    await create_outstanding_payments_entry(1357, 2468, 17.8)
-    await create_outstanding_payments_entry(1357, 3579, 23.3)
-    await create_outstanding_payments_entry(1357, 3579, 15.5)
-    await create_outstanding_payments_entry(9872, 1627, 12)
+@app_commands.describe(player1="Player name", player1_buy_in="Monetary value of the player's buy-in", player1_winnings="Monetary value of the player's remaining chips",
+                       player2="Player name", player2_buy_in="Monetary value of the player's buy-in", player2_winnings="Monetary value of the player's remaining chips",
+                       player3="Player name", player3_buy_in="Monetary value of the player's buy-in", player3_winnings="Monetary value of the player's remaining chips",
+                       player4="Player name", player4_buy_in="Monetary value of the player's buy-in", player4_winnings="Monetary value of the player's remaining chips",
+                       player5="Player name", player5_buy_in="Monetary value of the player's buy-in", player5_winnings="Monetary value of the player's remaining chips",
+                       player6="Player name", player6_buy_in="Monetary value of the player's buy-in", player6_winnings="Monetary value of the player's remaining chips",
+                       player7="Player name", player7_buy_in="Monetary value of the player's buy-in", player7_winnings="Monetary value of the player's remaining chips",
+                       player8="Player name", player8_buy_in="Monetary value of the player's buy-in", player8_winnings="Monetary value of the player's remaining chips",)
+async def record_game_cmd(interaction, player1: discord.Member, player1_buy_in: float, player1_winnings: float,
+                           player2: discord.Member = None, player2_buy_in: float = None, player2_winnings: float = None,
+                           player3: discord.Member = None, player3_buy_in: float = None, player3_winnings: float = None,
+                           player4: discord.Member = None, player4_buy_in: float = None, player4_winnings: float = None,
+                           player5: discord.Member = None, player5_buy_in: float = None, player5_winnings: float = None,
+                           player6: discord.Member = None, player6_buy_in: float = None, player6_winnings: float = None,
+                           player7: discord.Member = None, player7_buy_in: float = None, player7_winnings: float = None,
+                           player8: discord.Member = None, player8_buy_in: float = None, player8_winnings: float = None):
+    
+    maxParameters = 8
+    data = [] # list of lists, where each list has the form [player_id, player_buy_in, player_winnings]
+
+    for i in range(maxParameters): #Access all parameters easily, ensure all players have a corresponding buy in and winnings
+        player = f"player{i+1}"
+        playerBuyIn = f"player{i+1}_buy_in"
+        playerWinnings = f"player{i+1}_winnings"
+
+        #Get value of parameters passed in for player_i
+        player = locals()[player]
+        playerBuyIn = locals()[playerBuyIn]
+        playerWinnings = locals()[playerWinnings]
+
+        #error checking and putting in lists for passed parameters
+        if player and playerBuyIn and playerWinnings: #if all are not None then valid [player, buy_in, winnings] entry
+            if playerBuyIn < 0 or playerWinnings < 0: #no negative values
+                embed = discord.Embed(title= f'❌ Error: Invalid Arguments', description='Please make sure there are no negative values. A player who lost all chips would have a winnings value of 0.', color=0xf50000)
+                await interaction.response.send_message(embed=embed)
+                return
+
+            data.append([player.id, round(playerBuyIn, 2), round(playerWinnings, 2)]) #[player_id, player_buy_in, player_winnings]
+
+        elif player or playerBuyIn or playerWinnings: #if above is false but at least 1 is not None, reply with error message
+            embed = discord.Embed(title= f'❌ Error: Invalid Arguments', description='Please make sure the player name, buy-in, and winnings are recorded for each submitted player.', color=0xf50000)
+            await interaction.response.send_message(embed=embed)
+            return
+
+
+    try:
+        results = utilities.poker_debt_settlement_algo(data)
+        if results == None:
+            return
+    except Exception as e:
+        print(f"Error in poker debt settlement algorithm: {e}")
+        return
+
+    #if made it here that means no errors in parameters passed in
+    embed = discord.Embed(title= f'✅ Your game has been recorded, {interaction.user.name}. Thank you!', color=0x00ff00)
+    await interaction.response.send_message(embed=embed)
+
+
+    # await create_outstanding_payments_entry(1234, 5678, 32.5)
+    # await create_outstanding_payments_entry(1357, 2468, 17.8)
+    # await create_outstanding_payments_entry(1357, 3579, 23.3)
+    # await create_outstanding_payments_entry(1357, 3579, 15.5)
+    # await create_outstanding_payments_entry(9872, 1627, 12)
     
 
 @bot.tree.command(name="payout", description='Send Venmo requests for all outstanding balances a user(s) has', guild=discord.Object(id=1246667177759608932))
 async def payout_cmd(interaction):
-    await create_users_entry(3579, "Anotha_one")
     entries = await get_outstanding_payments_entries(1357)
 
     count = 0

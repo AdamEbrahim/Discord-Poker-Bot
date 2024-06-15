@@ -71,6 +71,7 @@ def get_minimum_transaction_sets(debts, max_k=5, epsilon=1e-9):
 def greedy(debts: list[list[float,int]]):
     """
     Greedy algo
+    Return value: list of lists where each sublist has the form [player_id_debtor, player_id_recipient, amount]
     """
 
     #sort in ascending order (max creditor, .., max debtor)
@@ -170,5 +171,5 @@ def poker_debt_settlement_algo(game_data):
 
 
 #print(poker_debt_settlement_algo([[1,2.5,0],[3,4.35,0],[4,-6.85,0]]))
-#print(poker_debt_settlement_algo([[1,2.5,0],[3,4.35,0],[4,-6.85,0],[7,4,4]])) #deal with 0's
+#print(poker_debt_settlement_algo([[1,2.5,0],[3,4.35,0],[4,-6.85,0],[7,4,4]]))
 #print(poker_debt_settlement_algo([[1,2.5,0],[4,-2.8,0],[4,2.8,0],[3,4.35,0],[4,-6.85,0]]))

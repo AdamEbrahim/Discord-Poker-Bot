@@ -75,6 +75,15 @@ async def create_users_entry(discord_id, username):
     except Exception as e:
         print(f"Unknown error in create_users_entry: {e}")
         return False
+    
+async def get_users_entry(discord_id):
+    try:
+        result = users_collection.find_one({"_id": discord_id})
+        return result
+    except Exception as e:
+        print(f"Unknown error in get_users_entry: {e}")
+        return None
+
 
 
 #implements insert if non-existant entry or update if entry exists 
@@ -117,6 +126,19 @@ async def get_outstanding_payments_entries(discord_id):
     except Exception as e:
         print(f"Unknown error in get_outstanding_payments_entries: {e}")
         return None
+    
+
+async def delete_outstanding_payments_entry(discord_id_debtor, discord_id_recipient):
+    try:
+        res = outstanding_payments_collection.delete_one({"debtor": discord_id_debtor, "recipient": discord_id_recipient})
+        if res == 0: #somehow unable to delete the document
+            print("Unable to find outstanding payments entry to delete")
+            return False
+        else:
+            return True
+    except Exception as e:
+        print(f"Uknown error in delete_outstanding_payments_entry: {e}")
+        return False
 
 
 #--EVENTS--#
@@ -239,6 +261,8 @@ async def record_game_cmd(interaction, player1: discord.Member, player1_buy_in: 
     maxParameters = 8
     data = [] # list of lists, where each list has the form [player_id, player_buy_in, player_winnings]
 
+    distinctPlayers = set() # set to make sure no duplicate players
+    unauthenticatedPlayers = [] #list of unauthenticated players
     for i in range(maxParameters): #Access all parameters easily, ensure all players have a corresponding buy in and winnings
         player = f"player{i+1}"
         playerBuyIn = f"player{i+1}_buy_in"
@@ -250,31 +274,89 @@ async def record_game_cmd(interaction, player1: discord.Member, player1_buy_in: 
         playerWinnings = locals()[playerWinnings]
 
         #error checking and putting in lists for passed parameters
-        if player and playerBuyIn and playerWinnings: #if all are not None then valid [player, buy_in, winnings] entry
+        if player and playerBuyIn != None and playerWinnings != None: #if all are not None then valid [player, buy_in, winnings] entry
             if playerBuyIn < 0 or playerWinnings < 0: #no negative values
-                embed = discord.Embed(title= f'❌ Error: Invalid Arguments', description='Please make sure there are no negative values. A player who lost all chips would have a winnings value of 0.', color=0xf50000)
+                embed = discord.Embed(title= f'❌ Invalid Arguments', description='Please make sure there are no negative values. A player who lost all chips would have a winnings value of 0.', color=0xf50000)
+                await interaction.response.send_message(embed=embed)
+                return
+            elif await get_users_entry(player.id) == None: #at least one player is not authenticated, add to list so at end we can report all unauthenticated players
+                unauthenticatedPlayers.append(player) #discord.member
+
+            #no duplicate players
+            if player.id in distinctPlayers:
+                embed = discord.Embed(title= f'❌ No Duplicate Players', color=0xf50000)
                 await interaction.response.send_message(embed=embed)
                 return
 
+            distinctPlayers.add(player.id)
             data.append([player.id, round(playerBuyIn, 2), round(playerWinnings, 2)]) #[player_id, player_buy_in, player_winnings]
 
-        elif player or playerBuyIn or playerWinnings: #if above is false but at least 1 is not None, reply with error message
-            embed = discord.Embed(title= f'❌ Error: Invalid Arguments', description='Please make sure the player name, buy-in, and winnings are recorded for each submitted player.', color=0xf50000)
+        elif player or playerBuyIn != None or playerWinnings != None: #if above is false but at least 1 is not None, reply with error message
+            embed = discord.Embed(title= f'❌ Invalid Arguments', description='Please make sure the player name, buy-in, and winnings are recorded for each submitted player.', color=0xf50000)
             await interaction.response.send_message(embed=embed)
             return
 
 
-    try:
-        results = utilities.poker_debt_settlement_algo(data)
-        if results == None:
+    #have unauthenticated players, tell user they cannot record a game if all players don't have Venmo verified
+    if len(unauthenticatedPlayers) > 0:
+            unverifiedUsers = ''
+            for p in unauthenticatedPlayers:
+                unverifiedUsers += f'{p.mention}, '
+
+            embed = discord.Embed(title= f'❌ Unverified Players', description= f'Users: {unverifiedUsers}have not been verified. Please make sure all players have used the \"**/verify-venmo**\" command.', color=0xf50000)
+            await interaction.response.send_message(embed=embed)
             return
-    except Exception as e:
-        print(f"Error in poker debt settlement algorithm: {e}")
+    
+    #Must have more than one player
+    if len(data) <= 1:
+        embed = discord.Embed(title= f'❌ Invalid Number of Players', description= f'You must have at least 2 players.', color=0xf50000)
+        await interaction.response.send_message(embed=embed)
         return
 
-    #if made it here that means no errors in parameters passed in
+    #if made it here that means no errors in parameters passed in, defer response while debt settlement algo runs
+    await interaction.response.defer()
+
+    try:
+        transactions = utilities.poker_debt_settlement_algo(data)
+
+        if transactions == None: #None returned if nonzero sum
+            embed = discord.Embed(title= f'❌ Invalid Values', description= f'Please make sure the sum of player buy-ins equals the sum of player winnings.', color=0xf50000)
+            await interaction.followup.send(embed=embed)
+
+            print("Error in given arguments: Nonzero total sum")
+            return
+        
+        
+        currTransaction = 0 #index of which transaction in case we need to go back and delete all created so far
+        for transaction in transactions:
+            if await create_outstanding_payments_entry(transaction[0], transaction[1], transaction[2]) == False: #somehow error in creating one entry, so delete all created so far so user can try again
+                embed = discord.Embed(title= f'❌ Database Error', description= f'We encountered an error in synchronizing our systems. Please try again', color=0xf50000)
+                await interaction.followup.send(embed=embed)
+
+                for i in range(currTransaction): #delete all
+                    res = await delete_outstanding_payments_entry(transactions[i][0], transactions[i][1])
+
+                return
+
+            currTransaction += 1
+
+    except Exception as e:
+        embed = discord.Embed(title= f'❌ Unknown Error', description= f'An unknown error has occurred in our algorithm. Please try again.', color=0xf50000)
+        await interaction.followup.send(embed=embed)
+
+        print(f"Error in poker debt settlement algorithm: {e}")
+        return
+    
+
+    try:
+        print("hi")
+        with db_client.start_session() as session:
+            
+    except pymongo.errors.BulkWriteError as e: #Error in creating outstanding_payment_entries in one bulk write
+        print(f"Error in : {e}")
+
     embed = discord.Embed(title= f'✅ Your game has been recorded, {interaction.user.name}. Thank you!', color=0x00ff00)
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 
     # await create_outstanding_payments_entry(1234, 5678, 32.5)
@@ -286,17 +368,23 @@ async def record_game_cmd(interaction, player1: discord.Member, player1_buy_in: 
 
 @bot.tree.command(name="payout", description='Send Venmo requests for all outstanding balances a user(s) has', guild=discord.Object(id=1246667177759608932))
 async def payout_cmd(interaction):
-    entries = await get_outstanding_payments_entries(1357)
+    entries = await get_outstanding_payments_entries(interaction.user.id)
 
     count = 0
     for item in entries:
         venmo_info = item['results']
 
         if len(venmo_info) < 1:
-            print("Error: Recipients venmo account info was not found")
+            print("Recipients venmo account info was not found")
         else:
-            paymentURL = f"https://venmo.com?url=venmo://paycharge?txn=pay&recipients=@{venmo_info[0]['venmo_usr']}&amount={item['amount']}"
-            embed = discord.Embed(title= f"Payment of **${item['amount']}** to **@{venmo_info[0]['venmo_usr']}**.", description=paymentURL, color=0x00ff00)
+            #delete the outstanding payments entry from the table
+            delete_result = await delete_outstanding_payments_entry(item['debtor'], item['recipient'])
+
+            if delete_result: #successfully deleted
+                paymentURL = f"https://venmo.com?url=venmo://paycharge?txn=pay&recipients=@{venmo_info[0]['venmo_usr']}&amount={item['amount']}&note=game"
+                embed = discord.Embed(title= f"Payment of **${item['amount']}** to **@{venmo_info[0]['venmo_usr']}**.", description=paymentURL, color=0x00ff00)
+            else: #delete failed
+                embed = discord.Embed(title= f'❌ Database Error', description= f'We encountered an error in synchronizing our systems for your payment of **${item['amount']}** to **@{venmo_info[0]['venmo_usr']}**. Please use the \'**/payout**\' command again to get the link for this payment.', color=0xf50000)
 
             if count == 0:
                 await interaction.response.send_message(embed=embed)

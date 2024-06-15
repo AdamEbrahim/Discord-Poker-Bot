@@ -109,13 +109,13 @@ def greedy(debts: list[list[float,int]]):
     return transactions
 
 
-def poker_debt_settlement_algo(data):
+def poker_debt_settlement_algo(game_data):
     """
     Debt Settlement Algorithm, which reduces to the Optimal Zero-Sum Set Packing problem 
     (Finding the maximum number of zero sum sets you can partition X = [debt1, debt2, ...] into is 
     equivalent to finding the minimum number of transactions)
 
-    data is a list of lists, where each list has the form [player_id, player_buy_in, player_winnings]
+    game_data is a list of lists, where each list has the form [player_id, player_buy_in, player_winnings]
 
     The algorithm is a Greedy algorithm that uses a max_heap and min_heap to reduce
     the time complexity to O(nlogn)
@@ -126,8 +126,14 @@ def poker_debt_settlement_algo(data):
 
     """
     
-    #get player debts (positive if they are in debt and owe, negative if have credit and are owed)
-    data = [[data[i][0], round(data[i][1] - data[i][2], 2)] for i in range(len(data))]
+    #get player debts (positive if they are in debt and owe, negative if have credit and are owed) and clean out any 0's (people who owe and receive nothing)
+    data = []
+    for player_info in game_data:
+        player_debt = round(player_info[1] - player_info[2], 2)
+
+        if player_debt != 0:
+            data.append([player_info[0], player_debt])
+  
     debts = [row[1] for row in data]
 
     #if total amount owed among everyone does not equal 0, there is an error in provided values
@@ -165,4 +171,4 @@ def poker_debt_settlement_algo(data):
 
 #print(poker_debt_settlement_algo([[1,2.5,0],[3,4.35,0],[4,-6.85,0]]))
 #print(poker_debt_settlement_algo([[1,2.5,0],[3,4.35,0],[4,-6.85,0],[7,4,4]])) #deal with 0's
-print(poker_debt_settlement_algo([[1,2.5,0],[4,-2.8,0],[4,2.8,0],[3,4.35,0],[4,-6.85,0]]))
+#print(poker_debt_settlement_algo([[1,2.5,0],[4,-2.8,0],[4,2.8,0],[3,4.35,0],[4,-6.85,0]]))

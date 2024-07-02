@@ -4,6 +4,7 @@ import asyncio
 from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
+import pymongo.client_session
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import pymongo.errors
@@ -76,6 +77,7 @@ async def create_users_entry(discord_id, username):
         print(f"Unknown error in create_users_entry: {e}")
         return False
     
+
 async def get_users_entry(discord_id):
     try:
         result = users_collection.find_one({"_id": discord_id})
@@ -86,24 +88,18 @@ async def get_users_entry(discord_id):
 
 
 
-#implements insert if non-existant entry or update if entry exists 
-async def create_outstanding_payments_entry(discord_id_debtor: int, discord_id_recipient: int, amount: float):
-    if not (isinstance(discord_id_debtor, int) and isinstance(discord_id_recipient, int) and isinstance(amount, (int, float))):
+#implements insert if non-existant entry or update if entry exists, must pass in the session for ACID transaction (all or nothing)
+async def create_outstanding_payments_entry(discord_id_debtor: int, discord_id_recipient: int, amount: float, session: pymongo.client_session.ClientSession):
+    if not (isinstance(discord_id_debtor, int) and isinstance(discord_id_recipient, int) and isinstance(amount, (int, float)) and isinstance(session, pymongo.client_session.ClientSession)):
         print("create_outstanding_payments_entry parameters are incorrect types")
-        return False
+        raise TypeError("create_outstanding_payments_entry parameters are incorrect types")
     
-    try:
-        #fields: discord id of person who owes money, discord id of person to whom money is owed (can't be their venmo since it can change in users table), amount
-        outstanding_payments_entry = {"debtor": discord_id_debtor, "recipient": discord_id_recipient, "amount": amount}
-        outstanding_payments_collection.insert_one(outstanding_payments_entry); 
-        return True
-    except pymongo.errors.DuplicateKeyError as e: #entry exists (outstanding balance to person exists, increase outstanding balance)
-        print(f"Duplicate key error in create_outstanding_payments_entry, updating entry instead")
-        outstanding_payments_collection.update_one({"debtor": discord_id_debtor, "recipient": discord_id_recipient}, {"$inc": {"amount": amount}})
-        return True
-    except Exception as e:
-        print(f"Unknown error in create_outstanding_payments_entry: {e}")
-        return False
+    #fields: discord id of person who owes money, discord id of person to whom money is owed (can't be their venmo since it can change in users table), amount
+    #outstanding_payments_entry = {"debtor": discord_id_debtor, "recipient": discord_id_recipient, "amount": amount}
+
+    #upsert (insert if not present, update other wise)
+    outstanding_payments_collection.update_one({"debtor": discord_id_debtor, "recipient": discord_id_recipient}, {"$inc": {"amount": amount}}, upsert=True, session=session)
+
 
 
 async def get_outstanding_payments_entries(discord_id):
@@ -316,6 +312,8 @@ async def record_game_cmd(interaction, player1: discord.Member, player1_buy_in: 
     #if made it here that means no errors in parameters passed in, defer response while debt settlement algo runs
     await interaction.response.defer()
 
+    #run poker debt settlement algo with error checking
+    transactions = []
     try:
         transactions = utilities.poker_debt_settlement_algo(data)
 
@@ -325,20 +323,6 @@ async def record_game_cmd(interaction, player1: discord.Member, player1_buy_in: 
 
             print("Error in given arguments: Nonzero total sum")
             return
-        
-        
-        currTransaction = 0 #index of which transaction in case we need to go back and delete all created so far
-        for transaction in transactions:
-            if await create_outstanding_payments_entry(transaction[0], transaction[1], transaction[2]) == False: #somehow error in creating one entry, so delete all created so far so user can try again
-                embed = discord.Embed(title= f'❌ Database Error', description= f'We encountered an error in synchronizing our systems. Please try again', color=0xf50000)
-                await interaction.followup.send(embed=embed)
-
-                for i in range(currTransaction): #delete all
-                    res = await delete_outstanding_payments_entry(transactions[i][0], transactions[i][1])
-
-                return
-
-            currTransaction += 1
 
     except Exception as e:
         embed = discord.Embed(title= f'❌ Unknown Error', description= f'An unknown error has occurred in our algorithm. Please try again.', color=0xf50000)
@@ -348,12 +332,20 @@ async def record_game_cmd(interaction, player1: discord.Member, player1_buy_in: 
         return
     
 
+    #start a session to perform ACID transaction insert of new payment records (if one operation fails, performs rollback of all previous operations in transaction)
     try:
-        print("hi")
-        with db_client.start_session() as session:
-            
-    except pymongo.errors.BulkWriteError as e: #Error in creating outstanding_payment_entries in one bulk write
-        print(f"Error in : {e}")
+        with db_client.start_session() as session: #explicit session, automatically closes session at the end of the with block
+            with session.start_transaction(): #automatically calls commit_transaction if block completes normally, but calls abort_transaction if the with block exits with exception
+                for transaction in transactions:
+                    await create_outstanding_payments_entry(transaction[0], transaction[1], transaction[2], session)
+
+
+    except Exception as e:
+        print(f"Error in inserting all outstanding payment entries: {e}")
+        embed = discord.Embed(title= f'❌ Database Error', description= f'We encountered an error in synchronizing our systems. Please try again.', color=0xf50000)
+        await interaction.followup.send(embed=embed)
+        return
+
 
     embed = discord.Embed(title= f'✅ Your game has been recorded, {interaction.user.name}. Thank you!', color=0x00ff00)
     await interaction.followup.send(embed=embed)
@@ -384,7 +376,7 @@ async def payout_cmd(interaction):
                 paymentURL = f"https://venmo.com?url=venmo://paycharge?txn=pay&recipients=@{venmo_info[0]['venmo_usr']}&amount={item['amount']}&note=game"
                 embed = discord.Embed(title= f"Payment of **${item['amount']}** to **@{venmo_info[0]['venmo_usr']}**.", description=paymentURL, color=0x00ff00)
             else: #delete failed
-                embed = discord.Embed(title= f'❌ Database Error', description= f'We encountered an error in synchronizing our systems for your payment of **${item['amount']}** to **@{venmo_info[0]['venmo_usr']}**. Please use the \'**/payout**\' command again to get the link for this payment.', color=0xf50000)
+                embed = discord.Embed(title= f'❌ Database Error', description= f"We encountered an error in synchronizing our systems for your payment of **${item['amount']}** to **@{venmo_info[0]['venmo_usr']}**. Please use the \'**/payout**\' command again to get the link for this payment.", color=0xf50000)
 
             if count == 0:
                 await interaction.response.send_message(embed=embed)

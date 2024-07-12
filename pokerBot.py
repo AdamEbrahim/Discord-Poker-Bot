@@ -236,7 +236,127 @@ async def verify_venmo_cmd(interaction, username: str):
         await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="record-game", description='Record player winnings from a Poker game', guild=discord.Object(id=1246667177759608932))
+@bot.tree.command(name="record-game-immediate-payout", description='Send 1-tap payment Venmo links to users after a Poker game.', guild=discord.Object(id=1246667177759608932))
+@app_commands.describe(player1="Player name", player1_buy_in="Monetary value of the player's buy-in", player1_winnings="Monetary value of the player's remaining chips",
+                       player2="Player name", player2_buy_in="Monetary value of the player's buy-in", player2_winnings="Monetary value of the player's remaining chips",
+                       player3="Player name", player3_buy_in="Monetary value of the player's buy-in", player3_winnings="Monetary value of the player's remaining chips",
+                       player4="Player name", player4_buy_in="Monetary value of the player's buy-in", player4_winnings="Monetary value of the player's remaining chips",
+                       player5="Player name", player5_buy_in="Monetary value of the player's buy-in", player5_winnings="Monetary value of the player's remaining chips",
+                       player6="Player name", player6_buy_in="Monetary value of the player's buy-in", player6_winnings="Monetary value of the player's remaining chips",
+                       player7="Player name", player7_buy_in="Monetary value of the player's buy-in", player7_winnings="Monetary value of the player's remaining chips",
+                       player8="Player name", player8_buy_in="Monetary value of the player's buy-in", player8_winnings="Monetary value of the player's remaining chips",)
+async def immediate_payout_game_cmd(interaction, player1: discord.Member, player1_buy_in: float, player1_winnings: float,
+                           player2: discord.Member = None, player2_buy_in: float = None, player2_winnings: float = None,
+                           player3: discord.Member = None, player3_buy_in: float = None, player3_winnings: float = None,
+                           player4: discord.Member = None, player4_buy_in: float = None, player4_winnings: float = None,
+                           player5: discord.Member = None, player5_buy_in: float = None, player5_winnings: float = None,
+                           player6: discord.Member = None, player6_buy_in: float = None, player6_winnings: float = None,
+                           player7: discord.Member = None, player7_buy_in: float = None, player7_winnings: float = None,
+                           player8: discord.Member = None, player8_buy_in: float = None, player8_winnings: float = None):
+    
+    maxParameters = 8
+    data = [] # list of lists, where each list has the form [player_id, player_buy_in, player_winnings]
+
+    distinctPlayers = set() # set to make sure no duplicate players
+    unauthenticatedPlayers = [] #list of unauthenticated players
+    for i in range(maxParameters): #Access all parameters easily, ensure all players have a corresponding buy in and winnings
+        player = f"player{i+1}"
+        playerBuyIn = f"player{i+1}_buy_in"
+        playerWinnings = f"player{i+1}_winnings"
+
+        #Get value of parameters passed in for player_i
+        player = locals()[player]
+        playerBuyIn = locals()[playerBuyIn]
+        playerWinnings = locals()[playerWinnings]
+
+        #error checking and putting in lists for passed parameters
+        if player and playerBuyIn != None and playerWinnings != None: #if all are not None then valid [player, buy_in, winnings] entry
+            if playerBuyIn < 0 or playerWinnings < 0: #no negative values
+                embed = discord.Embed(title= f'❌ Invalid Arguments', description='Please make sure there are no negative values. A player who lost all chips would have a winnings value of 0.', color=0xf50000)
+                await interaction.response.send_message(embed=embed)
+                return
+            elif await get_users_entry(player.id) == None: #at least one player is not authenticated, add to list so at end we can report all unauthenticated players
+                unauthenticatedPlayers.append(player) #discord.member
+
+            #no duplicate players
+            if player.id in distinctPlayers:
+                embed = discord.Embed(title= f'❌ No Duplicate Players', color=0xf50000)
+                await interaction.response.send_message(embed=embed)
+                return
+
+            distinctPlayers.add(player.id)
+            data.append([player.id, round(playerBuyIn, 2), round(playerWinnings, 2)]) #[player_id, player_buy_in, player_winnings]
+
+        elif player or playerBuyIn != None or playerWinnings != None: #if above is false but at least 1 is not None, reply with error message
+            embed = discord.Embed(title= f'❌ Invalid Arguments', description='Please make sure the player name, buy-in, and winnings are recorded for each submitted player.', color=0xf50000)
+            await interaction.response.send_message(embed=embed)
+            return
+
+
+    #have unauthenticated players, tell user they cannot record a game if all players don't have Venmo verified
+    if len(unauthenticatedPlayers) > 0:
+            unverifiedUsers = ''
+            for p in unauthenticatedPlayers:
+                unverifiedUsers += f'{p.mention}, '
+
+            embed = discord.Embed(title= f'❌ Unverified Players', description= f'Users: {unverifiedUsers}have not been verified. Please make sure all players have used the \"**/verify-venmo**\" command.', color=0xf50000)
+            await interaction.response.send_message(embed=embed)
+            return
+    
+    #Must have more than one player
+    if len(data) <= 1:
+        embed = discord.Embed(title= f'❌ Invalid Number of Players', description= f'You must have at least 2 players.', color=0xf50000)
+        await interaction.response.send_message(embed=embed)
+        return
+
+    #if made it here that means no errors in parameters passed in, defer response while debt settlement algo runs
+    await interaction.response.defer()
+
+    #run poker debt settlement algo with error checking
+    transactions = []
+    try:
+        transactions = utilities.poker_debt_settlement_algo(data)
+
+        if transactions == None: #None returned if nonzero sum
+            embed = discord.Embed(title= f'❌ Invalid Values', description= f'Please make sure the sum of player buy-ins equals the sum of player winnings.', color=0xf50000)
+            await interaction.followup.send(embed=embed)
+
+            print("Error in given arguments: Nonzero total sum")
+            return
+
+    except Exception as e:
+        embed = discord.Embed(title= f'❌ Unknown Error', description= f'An unknown error has occurred in our algorithm. Please try again.', color=0xf50000)
+        await interaction.followup.send(embed=embed)
+
+        print(f"Error in poker debt settlement algorithm: {e}")
+        return
+    
+
+    embed = discord.Embed(title= f'✅ Payment links are being sent out!', description="Links will be sent to DMs if authorized. Otherwise they will appear here.", color=0x00ff00)
+    await interaction.followup.send(embed=embed)
+
+
+    for transaction in transactions:
+        venmo_usr = await get_users_entry(transaction[1]) #recipient venmo info
+        venmo_usr = venmo_usr['venmo_usr']
+        amount = format(transaction[2], '.2f')
+
+        paymentURL = f"https://venmo.com?url=venmo://paycharge?txn=pay&recipients=@{venmo_usr}&amount={amount}&note=game"
+
+        debtor = bot.get_user(transaction[0])
+
+        if await utilities.can_dm_user(debtor):
+            embed = discord.Embed(title= f"Payment of **${amount}** to **@{venmo_usr}**.", description=paymentURL, color=0x00ff00)
+            await debtor.dm_channel.send(embed=embed)
+        else:
+            # await interaction.followup.send(f"{debtor.mention}")
+            embed = discord.Embed(title= f"Payment of **${amount}** to **@{venmo_usr}**.", description=f"{debtor.mention}: {paymentURL}", color=0x00ff00)
+            await interaction.followup.send(embed=embed)
+
+
+
+
+@bot.tree.command(name="record-game", description='Record player winnings from a Poker game for future payment', guild=discord.Object(id=1246667177759608932))
 @app_commands.describe(player1="Player name", player1_buy_in="Monetary value of the player's buy-in", player1_winnings="Monetary value of the player's remaining chips",
                        player2="Player name", player2_buy_in="Monetary value of the player's buy-in", player2_winnings="Monetary value of the player's remaining chips",
                        player3="Player name", player3_buy_in="Monetary value of the player's buy-in", player3_winnings="Monetary value of the player's remaining chips",
@@ -358,7 +478,7 @@ async def record_game_cmd(interaction, player1: discord.Member, player1_buy_in: 
     # await create_outstanding_payments_entry(9872, 1627, 12)
     
 
-@bot.tree.command(name="payout", description='Send Venmo requests for all outstanding balances a user(s) has', guild=discord.Object(id=1246667177759608932))
+@bot.tree.command(name="payout", description='Get 1-tap Venmo links for all outstanding payments you have', guild=discord.Object(id=1246667177759608932))
 async def payout_cmd(interaction):
     entries = await get_outstanding_payments_entries(interaction.user.id)
 
@@ -373,8 +493,9 @@ async def payout_cmd(interaction):
             delete_result = await delete_outstanding_payments_entry(item['debtor'], item['recipient'])
 
             if delete_result: #successfully deleted
-                paymentURL = f"https://venmo.com?url=venmo://paycharge?txn=pay&recipients=@{venmo_info[0]['venmo_usr']}&amount={item['amount']}&note=game"
-                embed = discord.Embed(title= f"Payment of **${item['amount']}** to **@{venmo_info[0]['venmo_usr']}**.", description=paymentURL, color=0x00ff00)
+                amount = format(item['amount'], '.2f')
+                paymentURL = f"https://venmo.com?url=venmo://paycharge?txn=pay&recipients=@{venmo_info[0]['venmo_usr']}&amount={amount}&note=game"
+                embed = discord.Embed(title= f"Payment of **${amount}** to **@{venmo_info[0]['venmo_usr']}**.", description=paymentURL, color=0x00ff00)
             else: #delete failed
                 embed = discord.Embed(title= f'❌ Database Error', description= f"We encountered an error in synchronizing our systems for your payment of **${item['amount']}** to **@{venmo_info[0]['venmo_usr']}**. Please use the \'**/payout**\' command again to get the link for this payment.", color=0xf50000)
 

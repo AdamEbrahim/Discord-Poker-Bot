@@ -141,6 +141,7 @@ async def delete_outstanding_payments_entry(discord_id_debtor, discord_id_recipi
 @bot.event
 async def on_ready():
     # await bot.tree.sync(guild=discord.Object(id=1246667177759608932))
+    # await bot.tree.sync()
     print(f'{bot.user.name} has connected to Discord!')
 
 
@@ -210,7 +211,8 @@ async def on_member_join(member):
         await member.dm_channel.send(f'Hey {member.name}! Please use the \"**/verify-venmo**\" command if you want to connect your Venmo username to your account to receive future Poker earnings.')
               
 
-@bot.tree.command(name='verify-venmo', description="Connect your Venmo username to your account to receive future Poker earnings", guild=discord.Object(id=1246667177759608932))
+# @bot.tree.command(name='connect-venmo', description="Connect your Venmo username to your account to receive future Poker earnings", guild=discord.Object(id=1246667177759608932))
+@bot.tree.command(name='connect-venmo', description="Connect your Venmo username to your account to receive future Poker earnings")
 @app_commands.describe(username='Your Venmo username (the name after the \"@\")')
 @commands.max_concurrency(number=1, per=commands.BucketType.user, wait=False) #Ensures command can only be used 1 time per user concurrently
 async def verify_venmo_cmd(interaction, username: str):
@@ -236,7 +238,8 @@ async def verify_venmo_cmd(interaction, username: str):
         await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="record-game-immediate-payout", description='Send 1-tap payment Venmo links to users after a Poker game.', guild=discord.Object(id=1246667177759608932))
+# @bot.tree.command(name="get-game-payments", description='Send 1-tap payment Venmo links to users after a Poker game.', guild=discord.Object(id=1246667177759608932))
+@bot.tree.command(name="get-game-payments", description='Send 1-tap payment Venmo links to users after a Poker game.')
 @app_commands.describe(player1="Player name", player1_buy_in="Monetary value of the player's buy-in", player1_winnings="Monetary value of the player's remaining chips",
                        player2="Player name", player2_buy_in="Monetary value of the player's buy-in", player2_winnings="Monetary value of the player's remaining chips",
                        player3="Player name", player3_buy_in="Monetary value of the player's buy-in", player3_winnings="Monetary value of the player's remaining chips",
@@ -356,7 +359,8 @@ async def immediate_payout_game_cmd(interaction, player1: discord.Member, player
 
 
 
-@bot.tree.command(name="record-game", description='Record player winnings from a Poker game for future payment', guild=discord.Object(id=1246667177759608932))
+# @bot.tree.command(name="record-game", description='Record player winnings from a Poker game for future payment', guild=discord.Object(id=1246667177759608932))
+@bot.tree.command(name="record-game", description='Record player winnings from a Poker game for future payment')
 @app_commands.describe(player1="Player name", player1_buy_in="Monetary value of the player's buy-in", player1_winnings="Monetary value of the player's remaining chips",
                        player2="Player name", player2_buy_in="Monetary value of the player's buy-in", player2_winnings="Monetary value of the player's remaining chips",
                        player3="Player name", player3_buy_in="Monetary value of the player's buy-in", player3_winnings="Monetary value of the player's remaining chips",
@@ -478,7 +482,8 @@ async def record_game_cmd(interaction, player1: discord.Member, player1_buy_in: 
     # await create_outstanding_payments_entry(9872, 1627, 12)
     
 
-@bot.tree.command(name="payout", description='Get 1-tap Venmo links for all outstanding payments you have', guild=discord.Object(id=1246667177759608932))
+# @bot.tree.command(name="make-payments", description='Get 1-tap Venmo links for all outstanding payments you have', guild=discord.Object(id=1246667177759608932))
+@bot.tree.command(name="make-payments", description='Get 1-tap Venmo links for all outstanding payments you have')
 async def payout_cmd(interaction):
     entries = await get_outstanding_payments_entries(interaction.user.id)
 
